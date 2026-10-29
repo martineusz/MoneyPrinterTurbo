@@ -107,6 +107,9 @@ _SUPPORTED_VIDEO_SOURCES = frozenset({
     "volcengine_seedance", "ofox", "metaso_minimax", "muapi",
     "loomloom", "openai_image", "codex_image", "infistar", "jalapeno",
 })
+# --- studio hook ---
+_SUPPORTED_VIDEO_SOURCES = _SUPPORTED_VIDEO_SOURCES | studio.VIDEO_SOURCES
+# --- end studio hook ---
 
 
 def _get_video_music_prompt(params: VideoParams) -> str:
@@ -738,6 +741,10 @@ def get_video_materials(
     jalapeno_video_endpoint: volcengine_seedance.SeedanceEndpoint | None = None,
     codex_image_context: codex_image.CodexImageContext | None = None,
 ):
+    # --- studio hook ---
+    if params.video_source in studio.VIDEO_SOURCES:
+        return studio.prepare_materials(task_id, params, audio_duration, _mark_task_failed)
+    # --- end studio hook ---
     if params.video_source == "local":
         logger.info("\n\n## preprocess local materials")
         materials = video.preprocess_video(
@@ -1071,7 +1078,10 @@ def generate_final_videos(
         # 每条视频占 50% 进度中的一份，合成与最终编码各占一半。片段处理是
         # 合成里最耗时的部分，逐段推进这一半的进度。
         combine_share = 50 / params.video_count / 2
-        video.combine_videos(
+        # --- studio hook ---
+        _combine_videos = studio.combine_override(params, video.combine_videos)
+        # --- end studio hook ---
+        _combine_videos(
             combined_video_path=combined_video_path,
             video_paths=downloaded_videos,
             audio_file=audio_file,

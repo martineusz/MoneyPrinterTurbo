@@ -1,0 +1,12 @@
+{
+  "style_suffix": "placeholder style words, soft lighting, vertical composition",
+  "negative_prompt": "text, watermark, logo, blurry",
+  "entities": {
+    "Hero": "a placeholder character description (hair, clothes, age)",
+    "Town": "a placeholder location description"
+  },
+  "seed_mode": "per_scene",
+  "base_seed": 1000,
+  "width": 1080,
+  "height": 1920
+}

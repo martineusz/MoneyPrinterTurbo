@@ -85,10 +85,20 @@ POST_SCHEMA = {
     }),
 }
 
-STYLE_SCHEMA: dict = {}  # filled by scenes.py / story.py through register_style_schema
+STYLE_SCHEMA: dict = {
+    "style_suffix": F("str"),
+    "negative_prompt": F("str"),
+    "entities": F("strmap"),
+    "seed_mode": F("str", choices=("fixed", "per_scene", "random")),
+    "base_seed": F("int", lo=0, hi=2**31 - 1),
+    "width": F("int", lo=64, hi=8192),
+    "height": F("int", lo=64, hi=8192),
+    "comfyui_workflow": F("file"),
+}
 
 
 def register_style_schema(extra: dict) -> None:
+    """Let a feature module (e.g. story mode) add its own style.json keys."""
     STYLE_SCHEMA.update(extra)
 
 
