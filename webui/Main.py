@@ -76,6 +76,7 @@ from app.utils.logging_utils import (
 from app.utils import utils
 # --- studio hook ---
 from webui import studio_panel
+from app.services import studio as studio_service
 # --- end studio hook ---
 from app.utils.request_logging import trace_http_call
 
@@ -9053,7 +9054,9 @@ def _render_generation_controls(
             "openai_image",
             "codex_image",
             "local",
-        ]:
+        # --- studio hook ---
+        ] + sorted(studio_service.VIDEO_SOURCES):
+        # --- end studio hook ---
             _remove_active_generation_task(task_id)
             st.error(tr("Please Select a Valid Video Source"))
             st.stop()

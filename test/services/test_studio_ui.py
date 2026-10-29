@@ -33,3 +33,23 @@ def test_webui_renders_studio_panel_without_errors():
     assert not app.exception
     assert any(e.label == "Studio" for e in app.expander)
     assert any(c.key == "studio_post_checkbox" for c in app.checkbox)
+
+
+def test_webui_source_validation_accepts_studio_sources():
+    """The pre-submission check must not reject studio_scenes / studio_story."""
+    import ast
+    from pathlib import Path
+
+    from app.services import studio
+
+    tree = ast.parse(Path("webui/Main.py").read_text(encoding="utf-8"))
+    allowed = None
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.NotIn)
+                and ast.unparse(node.left) == "params.video_source"
+                and "pexels" in ast.unparse(node.comparators[0])):
+            allowed = eval(compile(ast.Expression(node.comparators[0]), "<check>", "eval"),
+                           {"studio_service": studio})
+    assert allowed is not None, "source validation not found in webui/Main.py"
+    assert {"studio_scenes", "studio_story"} <= set(allowed)
+    assert {"pexels", "local", "openai_image"} <= set(allowed)
