@@ -9,5 +9,6 @@
   "seed_mode": "per_scene",
   "base_seed": 1000,
   "width": 768,
-  "height": 1344
+  "height": 1344,
+  "comfyui_workflow": "workflow.json"
 }
