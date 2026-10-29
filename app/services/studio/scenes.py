@@ -94,7 +94,8 @@ def build_doc(script: str, cues, audio_duration: float, preset: presets.Preset, 
     style = preset.style or {}
     segments = segment(cues, audio_duration, cfg["min_scene_seconds"], cfg["max_scene_seconds"])
     prompts = scene_prompts.generate_prompts(
-        script, [s.text for s in segments], style.get("entities", {}), ask=ask)
+        script, [s.text for s in segments], style.get("entities", {}), ask=ask,
+        guidance=style.get("prompt_guidance", ""))
     mode, base = style.get("seed_mode", "fixed"), int(style.get("base_seed", 0))
     seeds = [_seed_for(mode, base, i) for i in range(1, len(segments) + 1)]
     motions = motion.pick_motions(
@@ -115,8 +116,9 @@ def build_doc(script: str, cues, audio_duration: float, preset: presets.Preset, 
 # ---- rendering ----------------------------------------------------------------
 
 def _full_prompt(scene: dict, style: dict) -> str:
-    suffix = style.get("style_suffix", "").strip()
-    return f"{scene['prompt'].strip()}, {suffix}" if suffix else scene["prompt"].strip()
+    parts = [style.get("style_prefix", "").strip(), scene["prompt"].strip(),
+             style.get("style_suffix", "").strip()]
+    return ", ".join(p for p in parts if p)
 
 
 def frame_counts(doc: dict) -> list[int]:

@@ -11,12 +11,15 @@ class ScenePromptError(RuntimeError):
 
 
 def build_prompt(script: str, narrations: list[str], entity_names: list[str],
-                 problem: str = "") -> str:
+                 problem: str = "", guidance: str = "") -> str:
     lines = "\n".join(f"{i}. {text}" for i, text in enumerate(narrations, 1))
     names = (
         "\nFixed names you must reuse verbatim whenever a scene involves them: "
         + ", ".join(entity_names) + "."
     ) if entity_names else ""
+    extra = (
+        f"\nAdditional guidance from the author of this series:\n{guidance.strip()}"
+    ) if guidance.strip() else ""
     retry = (
         f"\nYour previous answer was rejected ({problem}). Answer again."
     ) if problem else ""
@@ -29,7 +32,7 @@ def build_prompt(script: str, narrations: list[str], entity_names: list[str],
         "subject, setting, composition and lighting, at most 40 words. Describe only what can be "
         "seen. No abstract concepts, no on-screen text, captions, logos or letters, and do not "
         "mention the narration or the scene number."
-        f"{names}{retry}\n\n"
+        f"{names}{extra}{retry}\n\n"
         f"Return ONLY JSON in this shape, with exactly {len(narrations)} items in scene order:\n"
         "{\"scenes\": [{\"scene\": 1, \"prompt\": \"...\"}]}"
     )
@@ -80,7 +83,7 @@ def substitute_entities(prompt: str, entities: dict[str, str]) -> str:
 
 
 def generate_prompts(script: str, narrations: list[str], entities: dict[str, str],
-                     ask=None) -> list[str]:
+                     ask=None, guidance: str = "") -> list[str]:
     """One LLM call for the whole script; retry once on malformed output."""
     if ask is None:
         from app.services import llm
@@ -90,7 +93,7 @@ def generate_prompts(script: str, narrations: list[str], entities: dict[str, str
 
     problem = ""
     for attempt in (1, 2):
-        answer = ask(build_prompt(script, narrations, list(entities), problem))
+        answer = ask(build_prompt(script, narrations, list(entities), problem, guidance))
         if isinstance(answer, str) and answer.startswith("Error: "):
             raise ScenePromptError(answer.removeprefix("Error: ").strip())
         try:

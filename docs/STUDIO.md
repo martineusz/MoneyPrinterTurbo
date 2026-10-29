@@ -87,10 +87,24 @@ presets/<name>/
 ```
 Every file is validated on load: unknown keys (with "did you mean"), wrong types, bad colors/regex, missing referenced files; all problems are reported together.
 
-**post.json**: `look{lut, contrast, brightness, saturation, gamma, blur, chroma_offset, vignette, grain}`, `subtitles{enabled, font, fonts_dir, size, color, outline_color, outline_width, shadow, uppercase, position top|middle|bottom, margin_v, letter_spacing, under_grain}`, `voice_volume`, `voice_fx` (ffmpeg audio filter string), `bgm{file, volume, fade_out}`, `x264{preset, crf}`, and `cues[]`:
+**post.json**: `look{lut, contrast, brightness, saturation, gamma, blur, chroma_offset, vignette, grain, + analog effects below}`, `subtitles{enabled, font, fonts_dir, size, color, outline_color, outline_width, shadow, uppercase, position top|middle|bottom, margin_v, letter_spacing, under_grain}`, `voice_volume`, `voice_fx` (ffmpeg audio filter string), `bgm{file, volume, fade_out}`, `x264{preset, crf}`, and `cues[]`:
 `match` (case-insensitive regex per subtitle line) or `at` (seconds), plus `once`, `anchor start|end`, `offset`, and any of `sfx`+`volume`, `glitch` (seconds, `glitch_style: "shift"`), `invert`/`flash`/`black` (seconds), `silence_before` (seconds).
 
-**style.json**: `style_suffix`, `negative_prompt`, `entities` (name → fixed description, substituted wherever the LLM names them), `seed_mode fixed|per_scene|random`, `base_seed`, `width`, `height` (size requested from the image model; the video is always rendered at the aspect resolution, e.g. 1080x1920, scaling the image), `comfyui_workflow` (JSON with `{prompt} {negative} {seed} {width} {height}` placeholders), and `story{footage_dir, title_card{background_color, opacity, radius, channel_name, avatar, font, title_size, title_color, channel_size, channel_color, label, label_color, label_background}, captions{font, fonts_dir, size, color, highlight_color, outline_color, outline_width, shadow, uppercase, position, margin_v, letter_spacing, max_words, max_chars}}`.
+**style.json**: `style_prefix` (prepended to every scene prompt, before the LLM's description), `style_suffix` (appended), `prompt_guidance` (free text added to the instructions that turn narration into visual prompts, e.g. camera or composition rules), `negative_prompt`, `entities` (name → fixed description, substituted wherever the LLM names them), `seed_mode fixed|per_scene|random`, `base_seed`, `width`, `height` (size requested from the image model; the video is always rendered at the aspect resolution, e.g. 1080x1920, scaling the image), `comfyui_workflow` (JSON with `{prompt} {negative} {seed} {width} {height}` placeholders), and `story{footage_dir, title_card{background_color, opacity, radius, channel_name, avatar, font, title_size, title_color, channel_size, channel_color, label, label_color, label_background}, captions{font, fonts_dir, size, color, highlight_color, outline_color, outline_width, shadow, uppercase, position, margin_v, letter_spacing, max_words, max_chars}}`.
+
+### Analog / VHS look effects (post.json `look`, all optional and off by default)
+
+| Key | Value | Effect |
+|---|---|---|
+| `frame_43` | `true` | Image rendered as a centered 4:3 picture with black bars inside the 9:16 frame (center crop) |
+| `jitter` | 0-1 | Horizontal tracking wobble: small time-varying shift, occasionally stronger (crop + rescale) |
+| `chroma_bleed` | pixels (0-64) | Horizontal-only blur of the chroma planes (colour smearing) |
+| `tracking_bar` | `true` | Soft noisy band that rolls down the frame for ~4 s every 10 s (a second lavfi input of the same pass, overlaid) |
+| `scanlines` | 0-1 | Darkens every other line (period scales with resolution) with that opacity |
+| `timestamp` | `{format, start, position, font, size, color}` | Camcorder counter drawn with drawtext. `format` is strftime-like (`"PLAY  %H:%M:%S"`, no `'` or backslash); `start` is `"HH:MM:SS"` or `"random"` (stable per task folder + video index, so dry-run and render agree); `position` is `top_left` or `bottom_right` (inside the 4:3 picture when `frame_43` is on); `font` is a font file in the preset (default: first font in `fonts/`, else Be Vietnam Pro) |
+| `fps` | 1-60 | Output frame rate drop (e.g. `15`) for a choppy tape feel |
+
+Order inside the single pass: `... rgbashift -> frame_43 -> jitter -> chroma_bleed -> tracking_bar -> scanlines -> timestamp -> [subtitles if under_grain] -> grain -> vignette -> cues -> [subtitles if not under_grain] -> fps -> yuv420p`. So scanlines, counter and under-grain subtitles degrade with the grain, and fps drops frames last. `--dry-run` prints a "look effects:" list (including the resolved counter start) before the ffmpeg command.
 
 ### Creating a preset
 Copy `presets/example/`, rename it, edit the JSON (the example holds neutral placeholders only), drop files into `sounds/ luts/ fonts/`, reference them by relative path, then check with `python -m app.services.studio.post <task_folder> --preset NAME --dry-run`.

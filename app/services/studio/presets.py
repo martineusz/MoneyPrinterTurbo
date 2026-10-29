@@ -25,6 +25,8 @@ class F:
     lo: float | None = None
     hi: float | None = None
     schema: dict | None = None  # for obj / items of list
+    pattern: str | None = None  # full-match regex for str values
+    hint: str = ""  # shown when the pattern does not match
 
 
 COLOR_RE = re.compile(r"#[0-9a-fA-F]{6}")
@@ -40,6 +42,22 @@ POST_SCHEMA = {
         "chroma_offset": F("int", lo=0, hi=64),
         "vignette": F("num", lo=0, hi=1),
         "grain": F("num", lo=0, hi=100),
+        # analog / VHS effects (all off by default)
+        "scanlines": F("num", lo=0, hi=1),
+        "chroma_bleed": F("num", lo=0, hi=64),
+        "jitter": F("num", lo=0, hi=1),
+        "tracking_bar": F("bool"),
+        "fps": F("int", lo=1, hi=60),
+        "frame_43": F("bool"),
+        "timestamp": F("obj", schema={
+            "format": F("str", pattern=r"[^'\\]+", hint="must not contain ' or backslash"),
+            "start": F("str", pattern=r"random|\d{1,2}:[0-5]\d:[0-5]\d",
+                       hint="use HH:MM:SS or 'random'"),
+            "position": F("str", choices=("top_left", "bottom_right")),
+            "font": F("file"),
+            "size": F("int", lo=8, hi=300),
+            "color": F("color"),
+        }),
     }),
     "subtitles": F("obj", schema={
         "enabled": F("bool"),
@@ -86,7 +104,9 @@ POST_SCHEMA = {
 }
 
 STYLE_SCHEMA: dict = {
+    "style_prefix": F("str"),
     "style_suffix": F("str"),
+    "prompt_guidance": F("str"),
     "negative_prompt": F("str"),
     "entities": F("strmap"),
     "seed_mode": F("str", choices=("fixed", "per_scene", "random")),
@@ -162,6 +182,8 @@ def _check(value: Any, f: F, where: str, base: str, problems: list[str]) -> Any:
                 return bad(f"invalid regex {value!r}: {exc}")
         if f.choices and value not in f.choices:
             return bad(f"must be one of {', '.join(f.choices)}; got {value!r}")
+        if f.pattern and not re.fullmatch(f.pattern, value):
+            return bad(f"invalid value {value!r}" + (f": {f.hint}" if f.hint else ""))
         if kind in ("file", "dir"):
             full = value if os.path.isabs(value) else os.path.join(base, value)
             ok = os.path.isfile(full) if kind == "file" else os.path.isdir(full)

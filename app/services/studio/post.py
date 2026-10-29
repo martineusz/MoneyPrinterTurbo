@@ -12,6 +12,7 @@ CLI: python -m app.services.studio.post <task_folder> --preset NAME [--index N] 
 
 import argparse
 import os
+import random
 import re
 import shlex
 import sys
@@ -41,6 +42,11 @@ class Plan:
     ass_path: str = ""
     ass_text: str = ""
     notes: list[str] = field(default_factory=list)
+    effects: list[str] = field(default_factory=list)
+
+
+BAR = "@BAR@"  # marks where the tracking-bar overlay joins the video chain
+LOOK_EFFECTS = ("scanlines", "chroma_bleed", "jitter", "tracking_bar", "fps", "frame_43", "timestamp")
 
 
 def resolve_cues(cues: list[dict], lines: list[Cue]) -> list[Event]:
@@ -77,10 +83,77 @@ def _sub_filter(ass_path: str, fonts_dir: str | None) -> str:
     return out
 
 
+def timestamp_offset(ts: dict, seed_key: str) -> int:
+    """Start of the on-screen counter in seconds. 'random' is stable per task folder + index."""
+    start = ts.get("start", "00:00:00")
+    if start == "random":
+        return random.Random(seed_key).randrange(0, 86400)
+    h, m, s = (int(p) for p in start.split(":"))
+    return h * 3600 + m * 60 + s
+
+
+def _timestamp_filter(ts: dict, offset: int, font: str, width: int, height: int,
+                      box: tuple[int, int]) -> str:
+    """drawtext camcorder counter. ``box`` is the visible (top, bottom) image area."""
+    fmt = ts.get("format", "PLAY  %H:%M:%S").replace(":", "\\\\\\:")
+    text = "%{pts\\:gmtime\\:" + str(offset) + "\\:" + fmt + "}"
+    size = int(ts.get("size", 40))
+    margin = int(width * 0.05)
+    if ts.get("position", "top_left") == "bottom_right":
+        x, y = f"w-text_w-{margin}", f"{box[1] - margin}-text_h"
+    else:
+        x, y = str(margin), str(box[0] + margin)
+    color = ts.get("color", "#FFFFFF").lstrip("#")
+    return (
+        f"drawtext=fontfile={ffmpeg_util.quote_filter_value(font)}:text='{text}':x={x}:y={y}:"
+        f"fontsize={size}:fontcolor=0x{color}:borderw={max(1, size // 18)}:bordercolor=black"
+    )
+
+
+def describe_effects(look: dict, ts_offset: int | None = None) -> list[str]:
+    """Human-readable list of the analog effects that are on (for the dry-run output)."""
+    out = []
+    for key in LOOK_EFFECTS:
+        value = look.get(key)
+        if not value:
+            continue
+        if key == "timestamp":
+            h, rem = divmod(ts_offset or 0, 3600)
+            out.append(f"timestamp: {value.get('position', 'top_left')}, starts {h:02d}:{rem // 60:02d}:{rem % 60:02d}"
+                       f", format {value.get('format', 'PLAY  %H:%M:%S')!r}")
+        elif value is True:
+            out.append(key)
+        else:
+            out.append(f"{key}: {value}")
+    return out
+
+
+def _band_source(width: int, height: int) -> str:
+    """Noisy horizontal band for the tracking bar (a second, lavfi, input of the same pass)."""
+    bh = max(16, int(height * 0.07))
+    return (f"nullsrc=s={width}x{bh}:r=30,format=yuva444p,"
+            f"geq=lum='random(1)*255':cb=128:cr=128:a='90*sin(PI*Y/H)'")
+
+
+def _video_graph(steps: list[str], band_input: int | None) -> str:
+    if BAR not in steps:
+        return f"[0:v]{','.join(steps)}[vout]"
+    i = steps.index(BAR)
+    pre = ",".join(steps[:i]) or "null"
+    post = ",".join(steps[i + 1:])
+    return (
+        f"[0:v]{pre}[base];[{band_input}:v]gblur=sigma=1:sigmaV=0.5[band];"
+        f"[base][band]overlay=x=0:y='(mod(t,10)/4)*(H+h)-h':format=auto:"
+        f"enable='lt(mod(t,10),4)',{post}[vout]"
+    )
+
+
 def _video_chain(post: dict, events: list[Event], ass_path: str, fonts_dir: str | None,
-                 pad: float) -> str:
+                 pad: float, size: tuple[int, int] = (1080, 1920), ts_offset: int = 0,
+                 ts_font: str = "") -> list[str]:
     look = post.get("look", {})
     sub = post.get("subtitles", {})
+    width, height = size
     burn = bool(ass_path)
     under = bool(sub.get("under_grain", False))
     steps: list[str] = []
@@ -96,6 +169,28 @@ def _video_chain(post: dict, events: list[Event], ass_path: str, fonts_dir: str 
     if look.get("chroma_offset"):
         n = int(look["chroma_offset"])
         steps.append(f"rgbashift=rh={-n}:bh={n}")
+    box = (0, height)
+    if look.get("frame_43"):
+        crop_h = int(width * 3 / 4) // 2 * 2
+        if crop_h < height:
+            top = (height - crop_h) // 2 // 2 * 2
+            steps.append(f"crop={width}:{crop_h}:0:{top},pad={width}:{height}:0:{top}:black")
+            box = (top, top + crop_h)
+    if look.get("jitter"):
+        m = max(2, round(float(look["jitter"]) * width * 0.02))
+        x = (f"{m}+{m}*(0.5*sin(37*t)+0.3*sin(11*t))"
+             f"+{2 * m}*gt(sin(2.3*t)*sin(0.7*t),0.9)*sin(90*t)")
+        steps.append(f"crop=w=iw-{2 * m}:h=ih:x='{x}':y=0,scale={width}:{height},setsar=1")
+    if look.get("chroma_bleed"):
+        steps.append(f"format=yuv420p,gblur=sigma={_num(look['chroma_bleed'])}:sigmaV=0:planes=6")
+    if look.get("tracking_bar"):
+        steps.append(BAR)
+    if look.get("scanlines"):
+        period = 2 * max(1, round(height / 960))
+        steps.append(
+            f"drawgrid=w=0:h={period}:t={period // 2}:c=black@{_num(look['scanlines'])}")
+    if look.get("timestamp"):
+        steps.append(_timestamp_filter(look["timestamp"], ts_offset, ts_font, width, height, box))
     if burn and under:
         steps.append(_sub_filter(ass_path, fonts_dir))
     if look.get("grain"):
@@ -117,8 +212,10 @@ def _video_chain(post: dict, events: list[Event], ass_path: str, fonts_dir: str 
                 f"drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill:{_between(ev.time, c['black'])}")
     if burn and not under:
         steps.append(_sub_filter(ass_path, fonts_dir))
+    if look.get("fps"):
+        steps.append(f"fps={int(look['fps'])}")
     steps.append("format=yuv420p")
-    return ",".join(steps)
+    return steps
 
 
 _AFMT = "aformat=sample_rates=48000:channel_layouts=stereo"
@@ -235,7 +332,18 @@ def build_plan(task_folder: str, preset: presets.Preset, index: int = 1,
     audio_parts, sfx = _audio_graph(post, events, duration, n_inputs, has_bgm, game_input)
     for _, ev in sfx:
         cmd += ["-i", ev.cue["sfx"]]
-    graph = ";".join([f"[0:v]{_video_chain(post, events, ass_path, fonts_dir, pad)}[vout]"] + audio_parts)
+    look = post.get("look", {})
+    ts_offset, ts_font = 0, ""
+    if look.get("timestamp"):
+        ts_offset = timestamp_offset(look["timestamp"], f"{os.path.basename(task_folder)}-{index}")
+        ts_font = look["timestamp"].get("font") or _default_font(preset.root)
+    steps = _video_chain(post, events, ass_path, fonts_dir, pad, (vinfo.width, vinfo.height),
+                         ts_offset, ts_font)
+    band_input = None
+    if BAR in steps:
+        band_input = n_inputs + len(sfx)
+        cmd += ["-f", "lavfi", "-i", _band_source(vinfo.width, vinfo.height)]
+    graph = ";".join([_video_graph(steps, band_input)] + audio_parts)
     x264 = post.get("x264", {})
     tmp_out = out_path + ".tmp.mp4"
     cmd += [
@@ -246,22 +354,40 @@ def build_plan(task_folder: str, preset: presets.Preset, index: int = 1,
         "-t", _num(duration), tmp_out,
     ]
     plan = Plan(cmd=cmd, events=events, output=out_path, duration=duration,
-                ass_path=ass_path if ass_text else "", ass_text=ass_text, notes=notes)
+                ass_path=ass_path if ass_text else "", ass_text=ass_text, notes=notes,
+                effects=describe_effects(look, ts_offset))
     if write_files and ass_text:
         with open(ass_path, "w", encoding="utf-8") as handle:
             handle.write(ass_text)
     return plan
 
 
+def _default_font(preset_root: str) -> str:
+    """First font in the preset's fonts/ folder, else the bundled Be Vietnam Pro."""
+    folder = os.path.join(preset_root, "fonts")
+    if os.path.isdir(folder):
+        for name in sorted(os.listdir(folder)):
+            if name.lower().endswith((".ttf", ".otf")):
+                return os.path.join(folder, name)
+    from app.utils import utils
+
+    return os.path.join(utils.font_dir(), "BeVietnamPro-Bold.ttf")
+
+
 def format_events(plan: Plan) -> str:
     rows = [f"{e.time:8.2f}s  cue#{e.cue_index}  {e.source}" for e in plan.events] or ["(no cue events)"]
+    if plan.effects:
+        rows += ["", "look effects:"] + [f"  {line}" for line in plan.effects]
     return "\n".join(rows)
 
 
+def dry_run_plan(task_folder: str, preset_name: str, index: int = 1) -> Plan:
+    """Resolve cues/effects and build the ffmpeg command without running or writing anything."""
+    return build_plan(task_folder, presets.load(preset_name), index, write_files=False)
+
+
 def dry_run(task_folder: str, preset_name: str, index: int = 1) -> tuple[list[str], list[Event]]:
-    """Resolve cues and build the ffmpeg command without running or writing anything."""
-    preset = presets.load(preset_name)
-    plan = build_plan(task_folder, preset, index, write_files=False)
+    plan = dry_run_plan(task_folder, preset_name, index)
     return plan.cmd, plan.events
 
 
@@ -306,10 +432,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         name = args.preset or studio_config.get()["default_preset"]
         if args.dry_run:
-            cmd, events = dry_run(args.task_folder, name, args.index)
-            print(format_events(Plan(cmd, events, "", 0)))
+            plan = dry_run_plan(args.task_folder, name, args.index)
+            print(format_events(plan))
             print()
-            print(" ".join(shlex.quote(c) for c in cmd))
+            print(" ".join(shlex.quote(c) for c in plan.cmd))
             return 0
         preset = presets.load(name)
         print(apply_to_final(args.task_folder, preset, args.index))
