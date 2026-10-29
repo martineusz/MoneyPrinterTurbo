@@ -167,6 +167,13 @@ class VideoParams(BaseModel):
     paragraph_number: int = Field(default=1, ge=1, le=10)
     video_script_prompt: str = Field(default="", max_length=2000)
     custom_system_prompt: str = Field(default="", max_length=8000)
+    # --- studio hook ---
+    studio_post: bool = False  # run the studio post-processing preset on final videos
+    studio_preset: str = ""  # preset folder name; empty -> [studio] default_preset
+    studio_story_title: str = ""  # story mode title card text (empty -> first sentence)
+    studio_footage_dir: str = ""  # story mode footage folder (empty -> [studio] footage_dir)
+    studio_story_split_parts: bool = False  # story mode: split long narration into parts
+    # --- end studio hook ---
 
 
 class SubtitleRequest(BaseModel):

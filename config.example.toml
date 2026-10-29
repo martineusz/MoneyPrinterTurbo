@@ -835,3 +835,37 @@ open_task_folder_on_completion = true
 # subtitle_background_enabled = false
 # subtitle_background_color = "#000000"
 # rounded_subtitle_background = false
+
+# --------------------------------------------------------------------------
+# Studio (post-processing, scene mode, story mode). See docs/STUDIO.md.
+# Every option is optional; with nothing enabled MPT behaves exactly like upstream.
+# --------------------------------------------------------------------------
+[studio]
+# Folder holding one sub-folder per series (style.json, post.json, sounds/, luts/, fonts/).
+# Relative paths resolve against the project root.
+# presets_dir = "presets"
+# Preset used when a task does not name one.
+# default_preset = "example"
+# When post-processing is on, skip MPT's own (slow) MoviePy render. final-N.raw.mp4 is then
+# a plain mux of the visuals and narration without MPT subtitles or BGM.
+# skip_mpt_render = false
+# Default x264 settings for post-processing (post.json "x264" overrides).
+# x264_preset = "veryfast"
+# x264_crf = 18
+
+# Scene mode (video_source = "studio_scenes")
+# image_backend = "openai"           # "openai" (reuses [app] openai_image_*) or "comfyui"
+# comfyui_url = "http://127.0.0.1:8188"
+# comfyui_timeout = 300              # seconds to wait for one image
+# min_scene_seconds = 2.0            # shorter subtitle lines are merged with the next
+# max_scene_seconds = 5.0            # longer lines are split into several scenes
+# scene_motions = ["zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down", "static"]
+# scene_motion_order = "cycle"       # "cycle" or "random" (seeded by the scene seed)
+
+# Story mode (video_source = "studio_story")
+# footage_dir = ""                   # folder with background videos (a task may override it)
+# game_audio_volume = 0.0            # volume of the background footage's own audio (0 = muted)
+# title_card_seconds = 3.0
+# whisper_model = "small"            # faster-whisper model size (optional dependency)
+# whisper_device = "auto"            # "auto" (CUDA when available), "cuda" or "cpu"
+# max_part_seconds = 0               # >0 with studio_story_split_parts: split longer narration

@@ -39,6 +39,9 @@ from app.services import (
     voice,
 )
 from app.services import upload_post
+# --- studio hook ---
+from app.services import studio
+# --- end studio hook ---
 from app.services import state as sm
 from app.utils import file_security, utils
 from app.utils.subtitle_writer import staged_subtitle_file
@@ -1141,7 +1144,10 @@ def generate_final_videos(
                 warnings.append({"code": warning_code, "video_index": index})
 
         logger.info(f"\n\n## generating video: {index} => {final_video_path}")
-        bgm_mix_succeeded = video.generate_video(
+        # --- studio hook ---
+        _generate_video = studio.render_override(params, video.generate_video)
+        # --- end studio hook ---
+        bgm_mix_succeeded = _generate_video(
             video_path=combined_video_path,
             audio_path=audio_file,
             subtitle_path=subtitle_path,
@@ -1149,6 +1155,12 @@ def generate_final_videos(
             params=params,
             bgm_file_override=bgm_file_override,
         )
+        # --- studio hook ---
+        studio.postprocess_final(
+            task_id, params, index, combined_video_path, audio_file,
+            subtitle_path, final_video_path,
+        )
+        # --- end studio hook ---
         if (
             video_music_provider is not None
             and bgm_file_override
@@ -1721,6 +1733,12 @@ def _run_pipeline(
             "ffmpeg is not available; install ffmpeg or set app.ffmpeg_path "
             "in config.toml to a working ffmpeg executable",
         )
+
+    # --- studio hook ---
+    studio_error = studio.preflight(params, stop_at)
+    if studio_error:
+        return _mark_task_failed(task_id, "preflight", studio_error)
+    # --- end studio hook ---
 
     # 1. Generate script
     generation_progress.stage("script")

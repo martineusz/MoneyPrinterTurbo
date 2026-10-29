@@ -1,0 +1,27 @@
+{
+  "look": {
+    "contrast": 1.05,
+    "saturation": 0.95,
+    "grain": 6,
+    "vignette": 0.25
+  },
+  "subtitles": {
+    "enabled": true,
+    "font": "Arial",
+    "size": 72,
+    "color": "#FFFFFF",
+    "outline_color": "#000000",
+    "outline_width": 4,
+    "shadow": 0,
+    "uppercase": false,
+    "position": "middle",
+    "margin_v": 160,
+    "letter_spacing": 0,
+    "under_grain": false
+  },
+  "voice_volume": 1.0,
+  "cues": [
+    {"match": "\bwait\b", "once": true, "anchor": "start", "offset": 0.0, "glitch": 0.3, "glitch_style": "shift"}
+  ],
+  "x264": {"preset": "veryfast", "crf": 18}
+}
