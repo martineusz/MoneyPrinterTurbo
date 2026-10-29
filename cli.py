@@ -52,6 +52,9 @@ _CLI_VIDEO_SOURCES = (
     "codex_image",
     "local",
 )
+# --- studio hook ---
+_CLI_VIDEO_SOURCES += ("studio_scenes", "studio_story")
+# --- end studio hook ---
 
 
 class _CliHelpFormatter(
@@ -725,6 +728,11 @@ Batch manifests:
             "generates a UUID for every task"
         ),
     )
+    # --- studio hook ---
+    from app.services.studio import cli_args as studio_cli
+
+    studio_cli.add_arguments(parser)
+    # --- end studio hook ---
     args = parser.parse_args(argv)
 
     if (
@@ -966,6 +974,12 @@ def build_video_params(args: argparse.Namespace) -> VideoParams:
         "voice_name": _resolve_voice_name(args, ui_config),
         "subtitle_enabled": _resolve_subtitle_enabled(args, ui_config),
     }
+
+    # --- studio hook ---
+    from app.services.studio import cli_args as studio_cli
+
+    params_kwargs.update(studio_cli.params_from_args(args))
+    # --- end studio hook ---
 
     optional_arg_names = [
         "video_language",

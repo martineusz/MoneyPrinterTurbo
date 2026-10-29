@@ -74,6 +74,9 @@ from app.utils.logging_utils import (
     get_logging_options,
 )
 from app.utils import utils
+# --- studio hook ---
+from webui import studio_panel
+# --- end studio hook ---
 from app.utils.request_logging import trace_http_call
 
 st.set_page_config(
@@ -9470,6 +9473,10 @@ def _render_application():
     )
 
     _render_subtitle_settings(right_panel, params)
+
+    # --- studio hook ---
+    studio_panel.render(params, tr)
+    # --- end studio hook ---
 
     generation_submitted = _render_generation_controls(
         params,

@@ -9,12 +9,11 @@ import os
 import streamlit as st
 from loguru import logger
 
-SOURCE_LABELS = {
-    "studio_scenes": "Studio: scene images",
-    "studio_story": "Studio: story over footage",
+MODES = {
+    "off": "Off (use the Video Source above)",
+    "studio_scenes": "Scene images (one generated image per narration segment)",
+    "studio_story": "Story (narration over continuous background footage)",
 }
-# (group label, sources) pairs for the Video Source selector
-SOURCE_GROUPS = (("Studio", ("studio_scenes", "studio_story")),)
 
 
 def _recent_scene_tasks(limit: int = 15) -> list[str]:
@@ -114,6 +113,14 @@ def render(params, tr=lambda key: key):
             help=tr("Needs post.json in the preset. Replaces MPT's own subtitle burn-in and BGM."),
         ) and has_post
 
+        labels = {tr(text): key for key, text in MODES.items()}
+        choice = st.radio(
+            tr("Studio mode"), list(labels), key="studio_mode",
+            help=tr("Replaces the Video Source selected above for this video."))
+        mode = labels[choice]
+        if mode != "off":
+            params.video_source = mode
+
         if params.video_source == "studio_scenes":
             st.caption(tr("Scene mode: one generated image per narration segment. "
                           "Image backend: ") + cfg["image_backend"])
@@ -126,6 +133,6 @@ def render(params, tr=lambda key: key):
                 tr("Split long narration into parts"), value=False, key="studio_split_parts",
                 help=tr("Uses [studio] max_part_seconds and requires post-processing."))
         else:
-            st.caption(tr("Select a Studio video source to use scene or story mode."))
+            st.caption(tr("Pick a Studio mode above to use scene or story mode."))
         st.divider()
         _render_scene_editor(tr)

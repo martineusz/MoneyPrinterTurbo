@@ -1,171 +1,122 @@
-# Studio (branch `studio`) — plan
+# Studio
 
-Status: **Phase 0 plan, awaiting approval. No code has been written.**
+Studio adds three features for short vertical videos on top of MoneyPrinterTurbo (MPT). All new code lives in `app/services/studio/` (plus `webui/studio_panel.py`, `presets/`, tests in `test/services/test_studio_*.py`). Upstream files only carry small hooks wrapped in `# --- studio hook ---` / `# --- end studio hook ---`. With every studio option off MPT behaves exactly like upstream.
 
-Studio adds three features on top of MoneyPrinterTurbo (MPT) for short vertical videos:
+1. **Post-processing** — rebuilds `final-N.mp4` from `combined-N.mp4` + `audio.mp3` + `subtitle.srt` in one ffmpeg pass: look (LUT, grain, …), styled subtitles, BGM, SFX cues, glitches.
+2. **Scene mode** (`video_source = "studio_scenes"`) — one generated image per narration segment, in order, with camera motion.
+3. **Story mode** (`video_source = "studio_story"`) — narration over one continuous background clip, a title card and word-by-word captions.
 
-1. **Post-processing** — rebuilds the final video from a task's `combined-N.mp4` + `audio.mp3` + `subtitle.srt` with a look (LUT, grain, …), styled subtitles, BGM, SFX cues and glitches, in one ffmpeg pass.
-2. **Scene mode** (`video_source = "studio_scenes"`) — one generated image per narration segment, rendered in order with motion.
-3. **Story mode** (`video_source = "studio_story"`) — narration over one continuous background clip, title card, word-level captions.
+## Using it
 
-Core rule: the diff against upstream stays tiny. All new code lives in `app/services/studio/`; upstream files only get marked hooks (`# --- studio hook ---` … `# --- end studio hook ---`). With every studio option off, behaviour is identical to upstream.
+| Where | How |
+|---|---|
+| WebUI | Open the **Studio** expander: pick a preset, tick *Post-process*, choose *Studio mode* (scene/story), set story title / footage folder / split parts. The *Scenes* editor lists tasks with a `scenes.json`; edit prompt/seed/motion, save, or *Regenerate selected scenes*. |
+| CLI | `python cli.py --video-subject ... --video-source studio_scenes --studio-preset NAME --studio-post` (also `--studio-story-title`, `--studio-footage-dir`, `--studio-split-parts`). |
+| API | `studio_post`, `studio_preset`, `studio_story_title`, `studio_footage_dir`, `studio_story_split_parts` on the task request; `video_source` may be `studio_scenes` / `studio_story`. |
+| Post only | `python -m app.services.studio.post <task_folder> --preset NAME [--index N] [--dry-run]` |
+| Scenes only | `python -m app.services.studio.scenes <task_folder> [--regenerate 2,5] [--no-final]` |
 
----
+Pipeline order is unchanged: script → terms → audio → subtitle → materials → rendering. Scene mode needs subtitles enabled (it segments `subtitle.srt`). Studio sources still trigger MPT's term generation (unused, cheap).
 
-## 1. What I found in the code (facts the design relies on)
-
-- Pipeline order in `task._run_pipeline` (task.py:1549): preflight → script → terms → audio → subtitle → materials → `generate_final_videos`. `subtitle.srt` therefore exists before materials, as you said.
-- `generate_final_videos` (task.py:1010) loops `video_count` times: `video.combine_videos(...)` writes `combined-N.mp4`, then `video.generate_video(...)` (MoviePy) burns subtitles, mixes BGM and writes `final-N.mp4`.
-- `combine_videos` (video.py:973) cuts every material into `video_clip_duration` segments and loops/shuffles them until the audio length is reached. **Feeding it an already-assembled video would chop and loop it** (in sequential mode only the first segment is kept). So scene/story mode cannot just return their video as a "material"; they must replace the combine step. This is the one non-trivial hook.
-- `_SUPPORTED_VIDEO_SOURCES` (task.py:102) is the only server-side source whitelist. The CLI has its own `_CLI_VIDEO_SOURCES` (cli.py:40, also used for batch validation) and the WebUI has `VIDEO_SOURCE_GROUPS` (Main.py:136) plus a labels dict (Main.py:6029).
-- openai_image: `material._openai_image_endpoint()` / `_openai_image_size()` / `_request_openai_image(endpoint, payload) -> (bytes|None, error)` / `_save_openai_image_file(bytes, dir)` (material.py:1345–1700). They are private names, but they are the helpers to reuse (no copying). Config keys are `openai_image_base_url`, `openai_image_api_keys`, `openai_image_model`, `openai_image_size` in `[app]`.
-- Config: `config._cfg` is the whole parsed TOML and `save_config()` writes `dict(_cfg)` back, so an unknown `[studio]` section **survives a WebUI save**. Studio can read it without touching `app/config/config.py`.
-- ffmpeg: `utils.get_ffmpeg_binary()` (via `video.get_ffmpeg_binary()`); here it resolves to the bundled imageio-ffmpeg 7.1, which has libass, `lut3d`, `rgbashift`, `noise`, `vignette`, `amix`, `alimiter`. Studio will check for libass at runtime anyway.
-- i18n: `webui/i18n/*.json` has az ca de en es fr id it ko pt ru tr vi zh. **There is no Polish file.** `test_webui_i18n.py` enforces key parity across secondary locales, so adding keys to `en.json` would force edits to 12 other files plus that test (see Open questions).
-- Not installed in the venv right now: `faster-whisper`. Pillow comes in through MoviePy.
-
----
-
-## 2. Hook points in upstream files
-
-All hooks are additive. Line numbers are approximate (current `feat/studio` HEAD).
-
-| # | File / function | ~Line | Hook | Upstream lines changed |
-|---|---|---|---|---|
-| H1 | `app/models/schema.py` `VideoParams` | after 169 (end of class) | New fields with upstream-neutral defaults: `studio_preset: str = ""`, `studio_post: bool = False`, `studio_story_title: str = ""`, `studio_footage_dir: str = ""`, `studio_story_split_parts: bool = False` | +6 |
-| H2 | `app/services/task.py` imports + `_SUPPORTED_VIDEO_SOURCES` | 102–106 | `from app.services import studio` (import block) and, after the frozenset literal, `_SUPPORTED_VIDEO_SOURCES = _SUPPORTED_VIDEO_SOURCES \| studio.VIDEO_SOURCES` (literal is not edited) | +5 |
-| H3 | `task._run_pipeline` preflight | after the ffmpeg check, ~1723 | `err = studio.preflight(params, stop_at)` → `_mark_task_failed(task_id, "preflight", err)`. Validates preset files, libass, subtitles enabled for scene mode, footage folder, etc. before any paid API call | +6 |
-| H4 | `task.get_video_materials` | top of function, ~738 | `if params.video_source in studio.VIDEO_SOURCES: return studio.prepare_materials(task_id, params, audio_duration, audio_file, subtitle_path, video_script)` — builds `scenes.json`/images/clips (scene) or background segment + title card + captions (story) and returns the list of produced files. Script, audio and `subtitle.srt` are read from the task dir (see note below) | +4 |
-| H5 | `task.generate_final_videos`, combine step | ~1071 | `_combine_videos = studio.combine_override(params, video.combine_videos)`; the existing call `video.combine_videos(` becomes `_combine_videos(`. For non-studio sources `combine_override` returns the original function, so behaviour is unchanged. For studio sources it returns a function with the same signature that places the pre-rendered video at `combined_video_path` | +3, 1 line modified |
-| H6 | `task.generate_final_videos`, after `video.generate_video(...)` | ~1151 | `studio.postprocess_final(task_id, params, index, combined_video_path, audio_file, subtitle_path, final_video_path)` — if a preset with `post.json` is active: `final-N.mp4` → `final-N.raw.mp4`, post-processed result → `final-N.mp4`. Logs that MPT's own subtitle burn-in and BGM are bypassed. On failure it restores the raw file and records a warning rather than failing the task | +4 |
-| H7 | `cli.py` | `_CLI_VIDEO_SOURCES` (40) and arg parsing | Extend the source tuple after its literal (`_CLI_VIDEO_SOURCES += studio.VIDEO_SOURCES_TUPLE`) and `studio.cli.add_arguments(parser)` / `studio.cli.apply(args, params)` | ~+6 |
-| H8 | `webui/Main.py` | ~148 and ~6029 and the main render area | After `VIDEO_SOURCE_GROUPS` literal: add a `"studio"` group entry; add 2 labels to `video_source_labels`; one call `studio_panel.render(params, tr)` in the right-hand settings column | ~+8 |
-
-Net expected upstream diff: ~45 added lines, 1 modified line, across `schema.py`, `task.py`, `cli.py`, `webui/Main.py`, and `config.example.toml` (a documented `[studio]` section appended at the end). Phase 4 will report the real numbers.
-
-**Note on H4 and signatures.** `get_video_materials(task_id, params, video_terms, audio_duration, ...)` does not receive the script or audio path, but both are in the task directory (`audio.mp3`, `subtitle.srt`, `script.json`), and `utils.task_dir(task_id)` is available. Studio reads from there, so no upstream signature changes.
-
-**Things deliberately not hooked:**
-- Script/terms stages: untouched. Scene mode still lets MPT generate terms (unused, cheap). `stop_at` values other than `video` are unaffected.
-- `config.py`, `video.py`, `material.py`, `llm.py`: zero edits. Studio imports their helpers.
-- i18n JSON files: zero edits (see Open questions).
-
----
-
-## 3. New package layout
+## Architecture
 
 ```
 app/services/studio/
-  __init__.py        # public hook API: VIDEO_SOURCES, preflight, prepare_materials,
-                     #   combine_override, postprocess_final (thin dispatchers, lazy imports)
-  config.py          # [studio] section loader (config._cfg.get("studio")), defaults, validation
-  presets.py         # preset discovery + load + validation (style.json, post.json), path resolution
-  ffmpeg_util.py     # run_ffmpeg, libass check, filter-arg/path escaping (Windows drive letters), probe duration
-  srt.py             # SRT parser (BOM, , / . ms, multi-line) + time formatting
-  ass.py             # ASS generation (styles, escaping {}\ , colors BGR, alignment, letter spacing)
-  post.py            # Phase 1: build filter graph + command, cue resolution, dry-run, `python -m` CLI
-  scenes.py          # Phase 2: segmentation, scenes.json read/write, orchestration, re-render CLI
-  scene_prompts.py   # Phase 2: LLM shot descriptions (JSON, validate, retry once), entity substitution
-  image_backends.py  # Phase 2: openai (reuses material helpers) + ComfyUI; hash cache
-  motion.py          # Phase 2: zoom/pan filter expressions, per-scene motion picker
-  story.py           # Phase 3: orchestration (segment -> title card -> captions -> combined-1.mp4)
-  footage.py         # Phase 3: segment picker + used-range JSON log
-  titlecard.py       # Phase 3: Pillow title card (own design)
-  captions.py        # Phase 3: faster-whisper (lazy), alignment to script, chunking, ASS karaoke
-  cli.py             # Phase 4: argparse additions + `python -m app.services.studio` subcommands
-  i18n/en.json pl.json   # Phase 4: panel strings (own loader, English fallback)
-webui/studio_panel.py    # Phase 4
-presets/example/{style.json,post.json,sounds/,luts/,fonts/}   # placeholders only
-test/services/test_studio_*.py
+  __init__.py       hook API: VIDEO_SOURCES, preflight, prepare_materials, combine_override,
+                    render_override, postprocess_final
+  config.py         [studio] section (read from config._cfg; config.py upstream untouched)
+  presets.py        preset discovery, strict validation of style.json / post.json
+  ffmpeg_util.py    binary (video.get_ffmpeg_binary), libass check, filter value quoting, probe, run
+  srt.py ass.py     SRT parse/format/clip; ASS styles, escaping, colors
+  post.py           Phase 1 filter graph, cue resolution, dry run, CLI
+  segmentation.py   scenes that tile the audio
+  scene_prompts.py  LLM shot descriptions (JSON, validated, one retry), entity substitution
+  image_backends.py openai (reuses material.py helpers) / ComfyUI, hash cache
+  motion.py scenes.py  zoompan motions, scenes.json, rendering, re-render CLI
+  footage.py        continuous segment picker + footage_usage.json log
+  titlecard.py      Pillow title card (original design, no platform imitation)
+  captions.py       faster-whisper (lazy), alignment to script, chunking, ASS word highlight
+  story.py          story orchestration, split parts
+  materials.py      glue for the materials/combine hooks
+  cli_args.py       CLI options (import-light)
+webui/studio_panel.py
 ```
 
-Dependency direction: `__init__` → everything else; modules never import `task.py`. Imports of `video`, `material`, `llm` happen lazily inside functions so importing `studio` is cheap and has no cycles with `task.py`.
+Data flow for the new sources: `get_video_materials` hook → `studio.prepare_materials` builds the pre-rendered visuals (`studio-combined[-N].mp4`) → `combine_override` replaces `video.combine_videos` with a copy to `combined-N.mp4` (upstream's combine would chop and loop an assembled video) → MPT's render → `postprocess_final`.
 
----
+Behaviour notes:
+- **Post-processing owns subtitles and BGM.** MPT's own burn-in/BGM still run (the raw result is kept as `final-N.raw.mp4`) unless `skip_mpt_render = true`, which replaces MPT's MoviePy render with a plain mux. A failed post-process keeps MPT's output and logs the error.
+- **Story captions**: with post-processing on, story mode writes `captions.ass` and `post.py` burns it (so `under_grain` applies; `post.json` `subtitles` are ignored). With it off, captions are burned into the combined clip and MPT's own subtitle burn-in is suppressed (no duplicates).
+- **Game audio** (`game_audio_volume > 0`) is mixed only when post-processing is on.
+- **Split parts** (`studio_story_split_parts` + `max_part_seconds`) needs post-processing: each part gets `audio-partN.mp3`, `subtitle-partN.srt`, `captions-partN.ass`; `video_count` is set to the number of parts; MPT's render is replaced by a mux using the part audio. Cuts fall after sentence ends; a trailing remainder can be short.
+- **libass**: required for any subtitle/caption burn-in. If the ffmpeg build lacks the `ass`/`subtitles` filters, a clear error naming the binary is logged and the task fails in preflight.
+- faster-whisper is optional and imported lazily; without it story captions fall back to line-level timing with a log hint.
 
-## 4. Rendering design notes
+## Post-processing filter order
 
-**Path/filter escaping** (`ffmpeg_util.py`): filter arguments get the two-level escaping (`\` → `/`, `:` → `\:` so `C\:/x/y`, `'` → `\'`, `,`/`[`/`]`/`;` escaped when inside filtergraph text). To sidestep most of it the command writes the filtergraph to a temp file passed with `-/filter_complex` (ffmpeg ≥ 7; falls back to `-filter_complex_script` on older builds), and paths are passed to `subtitles=`/`ass=`/`lut3d=` as `fontsdir`/`filename` options that are escaped by one helper with unit tests including `C:\Users\me\a b\x.cube`.
+Video: `lut3d → eq → gblur → rgbashift → [subtitles if under_grain] → noise (temporal grain) → vignette → cue visuals (glitch / invert / flash / black via enable=between(t,a,b)) → [subtitles if not under_grain] → format=yuv420p`.
+Audio: narration (`voice_volume`, `voice_fx`, silence cues) + BGM (looped, trimmed, fade-out) + game audio + SFX (`adelay`) → `amix(normalize=0)` → `alimiter`. Output H.264 + AAC, `+faststart`, duration = narration (a short video's last frame is held).
 
-**libass check**: `ffmpeg -filters` must list `ass`/`subtitles`; if missing → `logger.error("ffmpeg at <path> was built without libass; subtitle burn-in needs an ffmpeg with --enable-libass …")` and post-processing is skipped (raw video kept).
+## Configuration
 
-**Post-processing filter order (documented, fixed)**:
-`[video] → scale/format → lut3d → eq → gblur → rgbashift → [subtitles if under_grain] → noise(grain, allf=t) → vignette → cue visuals (invert / flash / black / glitch shift, via enable=between(t,a,b)) → [subtitles if not under_grain] → format=yuv420p`.
-Audio: narration (`voice_volume`, `voice_fx`, silence cues via `volume=0:enable=…`), BGM (`aloop`/`-stream_loop`, volume, fade-out ending at narration end), SFX (`adelay` + volume) → `amix=normalize=0` → `alimiter`. Output `libx264 -preset veryfast -crf 18 -pix_fmt yuv420p`, AAC, `+faststart`, `-t <narration duration>`.
+### `[studio]` in config.toml (all optional)
 
-**Cue resolution**: `match` is a case-insensitive regex over each SRT line's text; `once` stops after the first hit; `anchor: start|end` selects which edge of the line the time refers to; `offset` seconds is added; `at` is fixed seconds. A cue can combine sfx, glitch, invert/flash/black and `silence_before`. Dry-run prints the resolved events table and the full ffmpeg command, and runs nothing.
-
-**Scene mode**: scenes tile the audio exactly (scene N ends where N+1 starts; last ends at audio end; first starts at 0 even if the first SRT line starts late). Each scene is rendered with ffmpeg `zoompan`/`crop` expressions at 30 fps, then concatenated in order into `combined-1.mp4`. Image cache key = `sha256(prompt|negative|seed|WxH|backend)`, stored in `<task>/scene_images/`.
-
-**Story mode**: one background segment of exactly audio length (`-ss <random> -t <dur>`), scaled+cropped to the target aspect, game audio muted (or `volume`), title card overlaid via `overlay=enable='between(t,0,N)'` with a fade. Captions: faster-whisper word timestamps → aligned to the script text (difflib-style sequence alignment; recognised words take their timing, script words supply the text) → chunks of 1–3 words → ASS with per-word highlight. When post-processing is **active**, story mode writes `captions.ass` and `post.py` burns that instead of the SRT-derived ASS (so `under_grain` still works and `post.json` `subtitles` are ignored). When post-processing is **off**, captions are burned into `combined-1.mp4` directly.
-
-**Title card is original**: rounded panel, channel name, optional avatar, title, optional label; no platform UI, logos, usernames, vote counts or award icons.
-
----
-
-## 5. Config schemas
-
-### `config.toml` / `config.example.toml` → `[studio]`
-
-```toml
-[studio]
-presets_dir = "presets"          # relative to repo root
-default_preset = "example"       # used when VideoParams.studio_preset is empty (UI/CLI prefill and post-processing)
-image_backend = "openai"         # "openai" (reuses [app] openai_image_*) or "comfyui"
-comfyui_url = "http://127.0.0.1:8188"
-comfyui_timeout = 300
-min_scene_seconds = 2.0
-max_scene_seconds = 5.0
-scene_motions = ["zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down", "static"]
-scene_motion_order = "cycle"     # "cycle" or "random" (seeded)
-footage_dir = ""                 # story mode background videos
-voice_game_audio_volume = 0.0    # story: background footage volume (0 = muted)
-title_card_seconds = 3.0
-whisper_model = "small"          # faster-whisper model size
-whisper_device = "auto"          # "auto" (CUDA if available), "cuda", "cpu"
-max_part_seconds = 0             # 0 = no splitting
-x264_preset = "veryfast"
-x264_crf = 18
-```
-
-### `presets/<name>/style.json` (scene mode)
-
-```json
-{
-  "style_suffix": "…", "negative_prompt": "…",
-  "entities": { "Name": "fixed visual description" },
-  "seed_mode": "fixed", "base_seed": 12345,
-  "width": 1080, "height": 1920,
-  "comfyui_workflow": "workflow.json"
-}
-```
-`seed_mode`: `fixed` (base_seed everywhere), `per_scene` (base_seed + index), `random`.
-
-### `presets/<name>/post.json`
-
-`look{lut, contrast, brightness, saturation, gamma, blur, chroma_offset, vignette, grain}`, `subtitles{enabled, font, fonts_dir, size, color, outline_color, outline_width, shadow, uppercase, position, margin_v, letter_spacing, under_grain}`, `voice_volume`, `voice_fx`, `bgm{file, volume, fade_out}`, `cues[{match|at, once, anchor, offset, sfx, volume, glitch, glitch_style, invert, flash, black, silence_before}]`, `x264{preset, crf}`.
-
-### Story section (in `style.json`, key `story`, or a separate `story.json`)
-
-`title_card{background_color, opacity, radius, channel_name, avatar, font, title_size, colors, label}`, `captions{font, size, color, highlight_color, outline, max_words}`.
-
-Validation on load (all presets): unknown keys → error naming the file and key (with a "did you mean" suggestion), wrong types → error with the expected type, referenced files (lut, sfx, bgm, font, avatar, workflow) must exist, relative paths resolve against the preset folder. All errors are collected and reported together.
-
----
-
-## 6. Phase plan
-
-| Phase | Deliverable | Commit |
+| Key | Default | Meaning |
 |---|---|---|
-| 1 | `ffmpeg_util`, `srt`, `ass`, `presets` (post part), `post` + CLI, hooks H1, H2 (sources not yet), H6, `[studio]` + `presets/example`; tests | `feat(studio): post-processing` |
-| 2 | scenes/prompts/backends/motion, hooks H2–H5, scenes.json + re-render CLI; tests | `feat(studio): scene mode` |
-| 3 | footage/titlecard/captions/story, split_parts; tests | `feat(studio): story mode` |
-| 4 | `webui/studio_panel.py`, CLI hook H7, H8, finish docs (this file becomes the final reference with a "rebasing on upstream" table) | `feat(studio): ui, cli, docs` |
+| `presets_dir` | `"presets"` | Folder of presets (relative to project root) |
+| `default_preset` | `"example"` | Preset used when a task names none |
+| `skip_mpt_render` | `false` | With post on, replace MPT's MoviePy render by a mux |
+| `x264_preset` / `x264_crf` | `"veryfast"` / `18` | Defaults for post output |
+| `image_backend` | `"openai"` | `"openai"` (reuses `[app] openai_image_*`) or `"comfyui"` |
+| `comfyui_url` / `comfyui_timeout` | `http://127.0.0.1:8188` / `300` | ComfyUI |
+| `min_scene_seconds` / `max_scene_seconds` | `2.0` / `5.0` | Merge/split thresholds |
+| `scene_motions` | all seven | `zoom_in zoom_out pan_left pan_right pan_up pan_down static` |
+| `scene_motion_order` | `"cycle"` | `"cycle"` or `"random"` (seeded by scene seed) |
+| `footage_dir` | `""` | Story footage folder (task option / preset `story.footage_dir` override) |
+| `game_audio_volume` | `0.0` | Background footage audio (0 = muted) |
+| `title_card_seconds` | `3.0` | Title card duration |
+| `whisper_model` / `whisper_device` | `"small"` / `"auto"` | faster-whisper (auto = CUDA when available) |
+| `max_part_seconds` | `0` | >0 enables splitting with `studio_story_split_parts` |
 
-After each phase: `uv run python -X utf8 -m pytest -q test`, then commit. I have not run the baseline suite yet (Phase 0 makes no code changes); I will run it first thing in Phase 1 so any pre-existing failure is recorded before my changes.
+### Preset folder
 
----
+```
+presets/<name>/
+  style.json   post.json
+  sounds/  luts/  fonts/        (optional; relative paths resolve against the preset folder)
+```
+Every file is validated on load: unknown keys (with "did you mean"), wrong types, bad colors/regex, missing referenced files; all problems are reported together.
 
-## 7. Risks and decisions to confirm
+**post.json**: `look{lut, contrast, brightness, saturation, gamma, blur, chroma_offset, vignette, grain}`, `subtitles{enabled, font, fonts_dir, size, color, outline_color, outline_width, shadow, uppercase, position top|middle|bottom, margin_v, letter_spacing, under_grain}`, `voice_volume`, `voice_fx` (ffmpeg audio filter string), `bgm{file, volume, fade_out}`, `x264{preset, crf}`, and `cues[]`:
+`match` (case-insensitive regex per subtitle line) or `at` (seconds), plus `once`, `anchor start|end`, `offset`, and any of `sfx`+`volume`, `glitch` (seconds, `glitch_style: "shift"`), `invert`/`flash`/`black` (seconds), `silence_before` (seconds).
 
-See the questions in the review message. In short: Polish/i18n approach, story-mode burn-in duplication, `split_parts` vs `video_count`, and whether to skip MoviePy's render when post-processing is active.
+**style.json**: `style_suffix`, `negative_prompt`, `entities` (name → fixed description, substituted wherever the LLM names them), `seed_mode fixed|per_scene|random`, `base_seed`, `width`, `height` (keep equal to the video aspect), `comfyui_workflow` (JSON with `{prompt} {negative} {seed} {width} {height}` placeholders), and `story{footage_dir, title_card{background_color, opacity, radius, channel_name, avatar, font, title_size, title_color, channel_size, channel_color, label, label_color, label_background}, captions{font, fonts_dir, size, color, highlight_color, outline_color, outline_width, shadow, uppercase, position, margin_v, letter_spacing, max_words, max_chars}}`.
+
+### Creating a preset
+Copy `presets/example/`, rename it, edit the JSON (the example holds neutral placeholders only), drop files into `sounds/ luts/ fonts/`, reference them by relative path, then check with `python -m app.services.studio.post <task_folder> --preset NAME --dry-run`.
+
+### scenes.json (task folder)
+`{version, preset, audio_duration, width, height, scenes:[{index, start, end, narration, prompt, seed, image, image_key, motion}]}`. `prompt` excludes the style suffix (added at render time). Scenes must tile `0..audio_duration` (checked on load). Images are cached in `storage/studio_cache/` by `sha256(prompt+suffix, negative, seed, size, backend)`, so only edited scenes regenerate; clips are cached per image/motion/length in `<task>/scene_clips/`.
+
+## Rebasing on upstream
+
+Hook points, in order of conflict likelihood. After a rebase run `git grep -n "studio hook"` — you should find exactly these.
+
+| File | Where | What |
+|---|---|---|
+| `app/services/task.py` | imports, after `from app.services import upload_post` | `from app.services import studio` |
+| `app/services/task.py` | after `_SUPPORTED_VIDEO_SOURCES = frozenset({...})` | union with `studio.VIDEO_SOURCES` |
+| `app/services/task.py` | `_run_pipeline`, just before `# 1. Generate script` | `studio.preflight(...)` → `_mark_task_failed` |
+| `app/services/task.py` | `get_video_materials`, top | studio sources return `studio.prepare_materials(...)` |
+| `app/services/task.py` | `generate_final_videos`, before the `combine_videos(` call | `_combine_videos = studio.combine_override(...)`; **call renamed** `video.combine_videos(` → `_combine_videos(` |
+| `app/services/task.py` | `generate_final_videos`, around `video.generate_video(` | `_generate_video = studio.render_override(...)`; **call renamed** `video.generate_video(` → `_generate_video(`; then `studio.postprocess_final(...)` right after the call |
+| `app/models/schema.py` | end of `VideoParams` | five `studio_*` fields |
+| `cli.py` | after `_CLI_VIDEO_SOURCES`, before `parser.parse_args(argv)`, before `optional_arg_names` | extend sources; add/read studio args |
+| `webui/Main.py` | import block after `from app.utils import utils`; after `_render_subtitle_settings(right_panel, params)` | `studio_panel` import and `studio_panel.render(params, tr)` |
+| `config.example.toml` | end of file | documented `[studio]` section |
+
+If upstream renames `combine_videos` / `generate_video` / `get_video_materials`, re-point the corresponding hook; the studio functions take the same keyword arguments (`combine_override` returns a callable accepting `combined_video_path, video_paths, audio_file, **kwargs`; `render_override` returns one accepting `video_path, audio_path, subtitle_path, output_file, params, bgm_file_override`). Studio calls these private upstream helpers: `material._openai_image_endpoint/_openai_image_size/_request_openai_image/_save_openai_image_file/is_openai_image_enabled`, `llm._generate_response/_strip_code_fence/_extract_embedded_json`, `video.get_ffmpeg_binary/subtitle_font_supports_text/generate_video`, `utils.task_dir/font_dir/storage_dir/root_dir`.
+
+## Tests
+
+`uv run python -X utf8 -m pytest -q test/services/test_studio_*.py` covers SRT/ASS/escaping, preset validation, cue resolution, post end-to-end (lavfi media, paths with spaces/apostrophes), segmentation tiling, prompt validation and retry, entity substitution, ComfyUI client, scene rendering with a mocked image backend, footage picker, alignment, chunking, title card, story end-to-end (with and without post, split parts), CLI and WebUI hooks.
