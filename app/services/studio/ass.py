@@ -16,6 +16,11 @@ def ass_color(color: str, alpha: int = 0) -> str:
     return f"&H{alpha:02X}{bb}{gg}{rr}".upper()
 
 
+def override_color(color: str) -> str:
+    """Color for an inline ``\\c`` override tag: '&HBBGGRR&'."""
+    return "&H" + ass_color(color)[4:] + "&"
+
+
 def ass_time(seconds: float) -> str:
     cs = max(0, round(seconds * 100))
     h, rem = divmod(cs, 360000)

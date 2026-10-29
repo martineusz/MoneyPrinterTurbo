@@ -40,3 +40,27 @@ def parse_srt(text: str) -> list[Cue]:
 def read_srt(path: str) -> list[Cue]:
     with open(path, encoding="utf-8-sig", errors="replace") as handle:
         return parse_srt(handle.read())
+
+
+def format_time(seconds: float) -> str:
+    ms = max(0, round(seconds * 1000))
+    h, ms = divmod(ms, 3600000)
+    m, ms = divmod(ms, 60000)
+    s, ms = divmod(ms, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def format_srt(cues: list[Cue]) -> str:
+    return "".join(
+        f"{i}\n{format_time(c.start)} --> {format_time(c.end)}\n{c.text}\n\n"
+        for i, c in enumerate(cues, 1))
+
+
+def clip_cues(cues: list[Cue], start: float, end: float) -> list[Cue]:
+    """Cues overlapping [start, end], shifted so the window starts at 0."""
+    out = []
+    for cue in cues:
+        a, b = max(cue.start, start), min(cue.end, end)
+        if b - a > 0.01:
+            out.append(Cue(len(out) + 1, round(a - start, 3), round(b - start, 3), cue.text))
+    return out

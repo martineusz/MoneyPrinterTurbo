@@ -5,6 +5,7 @@ is imported lazily so importing this package costs nothing and creates no cycles
 """
 
 import os
+import re
 
 from loguru import logger
 
@@ -19,6 +20,10 @@ def active_preset_name(params) -> str:
 
     preset = getattr(params, "studio_preset", "")
     return (preset if isinstance(preset, str) and preset else config.get()["default_preset"])
+
+
+def _story(params) -> bool:
+    return getattr(params, "video_source", "") == "studio_story"
 
 
 def _post_active(params) -> bool:
@@ -66,16 +71,37 @@ def _source_preflight(params, cfg, preset) -> str:
             if not material.is_openai_image_enabled(dict(app_config.app)):
                 return ("scene mode needs openai_image_base_url and openai_image_model in "
                         "config.toml (or set [studio] image_backend = 'comfyui')")
+    if params.video_source == "studio_story":
+        from . import ffmpeg_util
+
+        if not ffmpeg_util.has_libass():
+            ffmpeg_util.require_libass()
+            return "the ffmpeg build has no libass; story captions cannot be burned in"
+        folder = (getattr(params, "studio_footage_dir", "")
+                  or (preset.style or {}).get("story", {}).get("footage_dir") or cfg["footage_dir"])
+        if not folder or not os.path.isdir(folder):
+            return "story mode needs a footage folder (task option, preset story.footage_dir or [studio] footage_dir)"
+        if getattr(params, "studio_story_split_parts", False) is True and not (
+                _post_active(params) and preset.post is not None):
+            return "split_parts needs studio_post enabled and a preset with post.json"
     return ""
 
 
 def render_override(params, original):
     """Optionally replace MPT's MoviePy render when post-processing owns the final video."""
+    story_parts = _story(params) and getattr(params, "studio_story_split_parts", False) is True
+    if _story(params) and not _post_active(params):
+        # Story captions are rendered by studio; stop MPT burning subtitle.srt on top of them.
+        def without_subtitles(*args, **kwargs):
+            kwargs["subtitle_path"] = ""
+            return original(*args, **kwargs)
+
+        return without_subtitles
     if not _post_active(params):
         return original
     from . import config
 
-    if not config.get()["skip_mpt_render"]:
+    if not (config.get()["skip_mpt_render"] or story_parts):
         return original
 
     def mux_only(video_path, audio_path, subtitle_path, output_file, params, bgm_file_override=None):
@@ -83,6 +109,9 @@ def render_override(params, original):
 
         logger.info("studio: skip_mpt_render is on; muxing video + narration only")
         tmp = output_file + ".tmp.mp4"
+        match = re.search(r"final-(\d+)\.mp4$", os.path.basename(output_file))
+        part_audio = os.path.join(os.path.dirname(output_file), f"audio-part{match[1]}.mp3") if match else ""
+        audio_path = part_audio if os.path.isfile(part_audio) else audio_path
         ffmpeg_util.run(ffmpeg_util.base_cmd() + [
             "-i", video_path, "-i", audio_path, "-map", "0:v:0", "-map", "1:a:0",
             "-c:v", "copy", "-c:a", "aac", "-shortest", "-movflags", "+faststart", tmp])

@@ -125,7 +125,8 @@ _AFMT = "aformat=sample_rates=48000:channel_layouts=stereo"
 
 
 def _audio_graph(post: dict, events: list[Event], duration: float, n_inputs_before_sfx: int,
-                 has_bgm: bool) -> tuple[list[str], list[tuple[int, Event]]]:
+                 has_bgm: bool, game_input: int | None = None
+                 ) -> tuple[list[str], list[tuple[int, Event]]]:
     """Return audio filtergraph parts; sfx inputs are numbered after the BGM input."""
     parts: list[str] = []
     narr = [_AFMT, f"volume={_num(post.get('voice_volume', 1.0))}"]
@@ -145,6 +146,9 @@ def _audio_graph(post: dict, events: list[Event], duration: float, n_inputs_befo
             chain.append(f"afade=t=out:st={_num(max(0.0, duration - fade))}:d={_num(fade)}")
         parts.append(f"[2:a]{','.join(chain)}[bgm]")
         mix.append("[bgm]")
+    if game_input is not None:  # story mode background-footage audio (already volume-scaled)
+        parts.append(f"[{game_input}:a]{_AFMT},atrim=duration={_num(duration)}[game]")
+        mix.append("[game]")
     sfx: list[tuple[int, Event]] = []
     next_input = n_inputs_before_sfx
     for ev in events:
@@ -162,6 +166,12 @@ def _audio_graph(post: dict, events: list[Event], duration: float, n_inputs_befo
     return parts, sfx
 
 
+def _part_file(folder: str, name: str, index: int, ext: str) -> str:
+    """Story split-parts write <name>-part<N><ext>; prefer it over the whole-task file."""
+    part = os.path.join(folder, f"{name}-part{index}{ext}")
+    return part if os.path.isfile(part) else os.path.join(folder, f"{name}{ext}")
+
+
 def build_plan(task_folder: str, preset: presets.Preset, index: int = 1,
                output: str | None = None, write_files: bool = True) -> Plan:
     post = preset.post
@@ -170,9 +180,10 @@ def build_plan(task_folder: str, preset: presets.Preset, index: int = 1,
     cfg = studio_config.get()
     ffmpeg = ffmpeg_util.get_ffmpeg()
     video_in = os.path.join(task_folder, f"combined-{index}.mp4")
-    audio_in = os.path.join(task_folder, "audio.mp3")
-    srt_in = os.path.join(task_folder, "subtitle.srt")
-    story_ass = os.path.join(task_folder, "captions.ass")
+    audio_in = _part_file(task_folder, "audio", index, ".mp3")
+    srt_in = _part_file(task_folder, "subtitle", index, ".srt")
+    story_ass = _part_file(task_folder, "captions", index, ".ass")
+    game_audio = _part_file(task_folder, "game-audio", index, ".m4a")
     for needed in (video_in, audio_in):
         if not os.path.isfile(needed):
             raise FileNotFoundError(f"missing {needed}")
@@ -217,7 +228,11 @@ def build_plan(task_folder: str, preset: presets.Preset, index: int = 1,
     if has_bgm:
         cmd += ["-stream_loop", "-1", "-i", post["bgm"]["file"]]
     n_inputs = 3 if has_bgm else 2
-    audio_parts, sfx = _audio_graph(post, events, duration, n_inputs, has_bgm)
+    game_input = None
+    if os.path.isfile(game_audio):
+        cmd += ["-i", game_audio]
+        game_input, n_inputs = n_inputs, n_inputs + 1
+    audio_parts, sfx = _audio_graph(post, events, duration, n_inputs, has_bgm, game_input)
     for _, ev in sfx:
         cmd += ["-i", ev.cue["sfx"]]
     graph = ";".join([f"[0:v]{_video_chain(post, events, ass_path, fonts_dir, pad)}[vout]"] + audio_parts)
