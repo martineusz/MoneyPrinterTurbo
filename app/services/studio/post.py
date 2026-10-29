@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 
 from loguru import logger
 
-from . import ass, ffmpeg_util, presets
+from . import ass, ffmpeg_util, geometry, presets
 from . import config as studio_config
 from .srt import Cue, read_srt
 
@@ -170,12 +170,10 @@ def _video_chain(post: dict, events: list[Event], ass_path: str, fonts_dir: str 
         n = int(look["chroma_offset"])
         steps.append(f"rgbashift=rh={-n}:bh={n}")
     box = (0, height)
-    if look.get("frame_43"):
-        crop_h = int(width * 3 / 4) // 2 * 2
-        if crop_h < height:
-            top = (height - crop_h) // 2 // 2 * 2
-            steps.append(f"crop={width}:{crop_h}:0:{top},pad={width}:{height}:0:{top}:black")
-            box = (top, top + crop_h)
+    if look.get("frame_43") and (frame := geometry.frame43_box(width, height)):
+        top, crop_h = frame
+        steps.append(f"crop={width}:{crop_h}:0:{top},pad={width}:{height}:0:{top}:black")
+        box = (top, top + crop_h)
     if look.get("jitter"):
         m = max(2, round(float(look["jitter"]) * width * 0.02))
         x = (f"{m}+{m}*(0.5*sin(37*t)+0.3*sin(11*t))"

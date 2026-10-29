@@ -17,11 +17,14 @@ def pick_motions(count: int, allowed: list[str], order: str, seeds: list[int]) -
     return [random.Random(seeds[i]).choice(allowed) for i in range(count)]
 
 
-def zoompan_filter(motion: str, frames: int, width: int, height: int) -> str:
+def zoompan_filter(motion: str, frames: int, width: int, height: int,
+                   canvas: tuple[int, int, int] | None = None) -> str:
     """Return the video filter chain that turns one still image into ``frames`` frames.
 
     Expressions avoid commas so no extra escaping is needed. ``on`` is the output frame
-    number; progress is on/frames.
+    number; progress is on/frames. With ``canvas=(canvas_w, canvas_h, top)`` the picture
+    (``width`` x ``height``, motion applied inside it) is placed at ``top`` on a black
+    canvas, which is how scene mode fills the 4:3 box of look.frame_43.
     """
     if motion not in MOTIONS:
         raise ValueError(f"unknown motion {motion!r}")
@@ -42,8 +45,12 @@ def zoompan_filter(motion: str, frames: int, width: int, height: int) -> str:
     elif motion == "pan_down":
         z, x, y = "1.15", centre_x, f"(ih-ih/zoom)*{p}"
     big_w, big_h = int(width * OVERSAMPLE) // 2 * 2, int(height * OVERSAMPLE) // 2 * 2
-    return (
+    chain = (
         f"scale={big_w}:{big_h}:force_original_aspect_ratio=increase,crop={big_w}:{big_h},"
         f"zoompan=z='{z}':x='{x}':y='{y}':d={n}:s={width}x{height}:fps={FPS},"
-        f"setsar=1,format=yuv420p"
+        f"setsar=1"
     )
+    if canvas:
+        canvas_w, canvas_h, top = canvas
+        chain += f",pad={canvas_w}:{canvas_h}:0:{top}:black"
+    return chain + ",format=yuv420p"

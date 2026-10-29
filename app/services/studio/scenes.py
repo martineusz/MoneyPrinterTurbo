@@ -14,7 +14,7 @@ import random
 import sys
 
 from . import config as studio_config
-from . import ffmpeg_util, image_backends, motion, presets, scene_prompts
+from . import ffmpeg_util, geometry, image_backends, motion, presets, scene_prompts
 from .segmentation import check_tiling, segment
 from .srt import read_srt
 
@@ -64,6 +64,8 @@ def validate_doc(doc: dict) -> None:
             raise SceneError(f"scene {scene['index']}: unknown motion '{scene['motion']}'")
         if not scene["prompt"].strip():
             raise SceneError(f"scene {scene['index']}: empty prompt")
+    if not isinstance(doc.get("frame_43", False), bool):
+        raise SceneError("'frame_43' must be true or false")
     try:
         check_tiling(doc["scenes"], float(doc.get("audio_duration", 0)))
     except ValueError as exc:
@@ -89,8 +91,14 @@ def _sizes(style: dict, aspect) -> tuple[tuple[int, int], tuple[int, int]]:
     return render, (int(style.get("width", render[0])), int(style.get("height", render[1])))
 
 
+def wants_frame43(params, preset: presets.Preset) -> bool:
+    """True when post-processing will keep only the 4:3 box, so scenes should fill that box."""
+    look = (preset.post or {}).get("look", {})
+    return getattr(params, "studio_post", False) is True and bool(look.get("frame_43"))
+
+
 def build_doc(script: str, cues, audio_duration: float, preset: presets.Preset, cfg: dict,
-              aspect, ask=None) -> dict:
+              aspect, ask=None, frame_43: bool = False) -> dict:
     style = preset.style or {}
     segments = segment(cues, audio_duration, cfg["min_scene_seconds"], cfg["max_scene_seconds"])
     prompts = scene_prompts.generate_prompts(
@@ -104,6 +112,7 @@ def build_doc(script: str, cues, audio_duration: float, preset: presets.Preset, 
     return {
         "version": 1, "preset": preset.name, "audio_duration": round(audio_duration, 3),
         "width": width, "height": height, "image_width": image_w, "image_height": image_h,
+        "frame_43": bool(frame_43),
         "scenes": [
             {"index": i, "start": s.start, "end": s.end, "narration": s.text,
              "prompt": prompts[i - 1], "seed": seeds[i - 1], "image": "", "image_key": "",
@@ -130,10 +139,18 @@ def frame_counts(doc: dict) -> list[int]:
     return counts
 
 
-def render_clip(image: str, scene_motion: str, frames: int, width: int, height: int, out: str) -> None:
+def render_clip(image: str, scene_motion: str, frames: int, width: int, height: int, out: str,
+                box: tuple[int, int] | None = None) -> None:
+    """Render one scene. With ``box=(top, box_height)`` the image (and its motion) fills only
+    that band of the frame and the rest is black (see geometry.frame43_box)."""
     tmp = out + ".tmp.mp4"
+    if box:
+        top, box_h = box
+        vf = motion.zoompan_filter(scene_motion, frames, width, box_h, canvas=(width, height, top))
+    else:
+        vf = motion.zoompan_filter(scene_motion, frames, width, height)
     cmd = ffmpeg_util.base_cmd() + [
-        "-i", image, "-vf", motion.zoompan_filter(scene_motion, frames, width, height),
+        "-i", image, "-vf", vf,
         "-frames:v", str(frames), "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
         "-pix_fmt", "yuv420p", "-r", str(motion.FPS), tmp,
     ]
@@ -167,6 +184,7 @@ def render(task_folder: str, doc: dict, preset: presets.Preset, cfg: dict, backe
     negative = style.get("negative_prompt", "")
     width, height = doc["width"], doc["height"]
     image_w, image_h = doc.get("image_width", width), doc.get("image_height", height)
+    box = geometry.frame43_box(width, height) if doc.get("frame_43") else None
     clip_dir = os.path.join(task_folder, "scene_clips")
     os.makedirs(clip_dir, exist_ok=True)
     frames = frame_counts(doc)
@@ -181,10 +199,10 @@ def render(task_folder: str, doc: dict, preset: presets.Preset, cfg: dict, backe
             raise SceneError(f"scene {scene['index']}: {exc}") from exc
         scene["image"], scene["image_key"] = path, key
         ident = hashlib.sha256(
-            f"{key}|{scene['motion']}|{n_frames}|{width}x{height}".encode()).hexdigest()[:12]
+            f"{key}|{scene['motion']}|{n_frames}|{width}x{height}|{box}".encode()).hexdigest()[:12]
         clip = os.path.join(clip_dir, f"{scene['index']:03d}-{ident}.mp4")
         if not os.path.isfile(clip):
-            render_clip(path, scene["motion"], n_frames, width, height, clip)
+            render_clip(path, scene["motion"], n_frames, width, height, clip, box)
         clips.append(clip)
     save_doc(task_folder, doc)
     out = output or os.path.join(task_folder, COMBINED_NAME)
@@ -217,7 +235,8 @@ def build_for_task(task_id: str, params, audio_duration: float, ask=None, backen
         pass
     cues = read_srt(srt_path)
     script = script or " ".join(c.text for c in cues)
-    doc = build_doc(script, cues, audio_duration, preset, cfg, params.video_aspect, ask=ask)
+    doc = build_doc(script, cues, audio_duration, preset, cfg, params.video_aspect, ask=ask,
+                    frame_43=wants_frame43(params, preset))
     save_doc(task_folder, doc)
     backend = backend or image_backends.create_backend(cfg, preset.style, params.video_aspect)
     return [render(task_folder, doc, preset, cfg, backend, image_dir=image_dir)]

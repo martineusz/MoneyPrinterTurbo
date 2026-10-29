@@ -4,6 +4,8 @@ import difflib
 import json
 import os
 import re
+
+from loguru import logger
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -263,6 +265,24 @@ def validate_cues(cues: list, where: str, problems: list[str]) -> None:
             problems.append(f"{tag}: 'anchor'/'once' only apply to 'match' cues")
 
 
+_warned_frame43: set = set()
+
+
+def frame43_style_warning(preset: "Preset") -> str:
+    """Warning text when look.frame_43 is on but style.json is not sized for a 4:3 picture."""
+    if not (preset.post or {}).get("look", {}).get("frame_43") or preset.style is None:
+        return ""
+    width, height = preset.style.get("width"), preset.style.get("height")
+    if width and height and abs(width / height - 4 / 3) <= 0.1:
+        return ""
+    size = f"{width}x{height}" if width and height else "unset (defaults to the portrait video size)"
+    return (
+        f"preset '{preset.name}': look.frame_43 is on but style.json width/height is {size}, "
+        "not 4:3 landscape. Scene mode fills the 4:3 box with each image, so a portrait image "
+        "gets center-cropped. Try width/height of 1152x864 or 1024x768."
+    )
+
+
 @dataclass
 class Preset:
     name: str
@@ -302,4 +322,7 @@ def load(name: str, cfg: dict | None = None) -> Preset:
         preset.style = validate_object(raw, STYLE_SCHEMA, "style.json", root, problems)
     if problems:
         raise PresetError([f"[{name}] {p}" for p in problems])
+    if (warning := frame43_style_warning(preset)) and warning not in _warned_frame43:
+        _warned_frame43.add(warning)  # presets are loaded several times per task
+        logger.warning(f"studio: {warning}")
     return preset
