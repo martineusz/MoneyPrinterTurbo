@@ -1,12 +1,24 @@
 {
   "look": {
-    "contrast": 1.1,
-    "saturation": 1.3,
-    "gamma": 0.95,
+    "contrast": 1.0,
+    "saturation": 0.65,
+    "gamma": 0.9,
     "grain": 15,
-    "chroma_offset": 3,
+    "chroma_offset": 4,
     "vignette": 0.6,
-    "blur": 0.4
+    "blur": 0.7,
+    "frame_43": true,
+    "scanlines": 0.3,
+    "chroma_bleed": 3,
+    "jitter": 0.3,
+    "fps": 15,
+    "timestamp": {
+      "format": "PLAY  %H:%M:%S",
+      "start": "random",
+      "position": "bottom_right",
+      "size": 34,
+      "color": "#FFFFFF"
+    }
   },
   "subtitles": {
     "enabled": true,
@@ -18,8 +30,8 @@
     "outline_width": 4,
     "shadow": 0,
     "uppercase": false,
-    "position": "middle",
-    "margin_v": 160,
+    "position": "bottom",
+    "margin_v": 190,
     "letter_spacing": 0,
     "under_grain": true
   },

@@ -1,5 +1,7 @@
 {
-  "style_suffix": "grainy 2000s disposable camera photograph, harsh direct flash, oversaturated sickly green and magenta palette, liminal empty interior, low resolution, slight motion blur, off-center framing, vertical composition",
+  "style_prefix": "found footage still from a dusty analog VHS camcorder tape, 1990s home video",
+  "style_suffix": "washed out desaturated colors, muted sickly green-yellow cast, grainy low resolution, soft focus, harsh on-camera flash, liminal empty interior, off-center framing, landscape 4:3 composition",
+  "prompt_guidance": "Shoot every scene like a handheld analog camcorder frame: eye-level or slightly low angle, a wide shot with deep empty space, subject small or half hidden, nothing glamorous. Prefer fluorescent-lit corridors, empty rooms, closed doors and thresholds. Keep the unsettling element ambiguous, partially obscured, at the edge of the frame or far in the background, never a clear close-up of a monster. Describe only what the camera sees, in plain concrete terms.",
   "negative_prompt": "text, letters, watermark, logo, signature, clean, professional photography, illustration, cartoon, 3d render, pastel colors",
   "entities": {
     "The Watcher": "a tall thin pale figure with an elongated smooth face, no eyes, long arms hanging to its knees, wearing a faded grey raincoat",
@@ -8,7 +10,7 @@
   },
   "seed_mode": "per_scene",
   "base_seed": 1000,
-  "width": 768,
-  "height": 1344,
+  "width": 1152,
+  "height": 864,
   "comfyui_workflow": "workflow.json"
 }

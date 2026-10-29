@@ -80,7 +80,7 @@
         0
       ],
       "positive": [
-        "56:51",
+        "56:55",
         0
       ],
       "negative": [
@@ -123,6 +123,19 @@
     "class_type": "ConditioningZeroOut",
     "_meta": {
       "title": "Conditioning Zero Out"
+    }
+  },
+  "56:55": {
+    "inputs": {
+      "guidance": 2.2,
+      "conditioning": [
+        "56:51",
+        0
+      ]
+    },
+    "class_type": "FluxGuidance",
+    "_meta": {
+      "title": "FluxGuidance"
     }
   }
 }
