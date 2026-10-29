@@ -1,0 +1,13 @@
+{
+  "style_suffix": "grainy 2000s disposable camera photograph, harsh direct flash, oversaturated sickly green and magenta palette, liminal empty interior, low resolution, slight motion blur, off-center framing, vertical composition",
+  "negative_prompt": "text, letters, watermark, logo, signature, clean, professional photography, illustration, cartoon, 3d render, pastel colors",
+  "entities": {
+    "The Watcher": "a tall thin pale figure with an elongated smooth face, no eyes, long arms hanging to its knees, wearing a faded grey raincoat",
+    "The Hallway": "an endless narrow hallway with yellowed wallpaper, stained beige carpet, flickering fluorescent ceiling lights and many identical closed doors",
+    "The Door": "a plain wooden door painted dull teal, peeling paint, a brass handle, slightly ajar with darkness behind it"
+  },
+  "seed_mode": "per_scene",
+  "base_seed": 1000,
+  "width": 768,
+  "height": 1344
+}

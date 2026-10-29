@@ -137,8 +137,6 @@ def build_for_task(task_id: str, params, audio_duration: float, transcribe=None,
     if not os.path.isfile(audio_file):
         raise StoryError(f"missing {audio_file}")
     width, height = VideoAspect(params.video_aspect).to_resolution()
-    style = preset.style or {}
-    width, height = int(style.get("width", width)), int(style.get("height", height))
 
     script = _read_script(task_folder, params)
     title = params.studio_story_title.strip() or first_sentence(script) or params.video_subject

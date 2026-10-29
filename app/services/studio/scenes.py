@@ -80,11 +80,13 @@ def _seed_for(mode: str, base: int, index: int) -> int:
     return base
 
 
-def _target_size(style: dict, aspect) -> tuple[int, int]:
+def _sizes(style: dict, aspect) -> tuple[tuple[int, int], tuple[int, int]]:
+    """((render_w, render_h), (image_w, image_h)). Video size follows the aspect; the style's
+    width/height is only the size requested from the image model (scaled up when rendering)."""
     from app.models.schema import VideoAspect
 
-    default_w, default_h = VideoAspect(aspect).to_resolution()
-    return int(style.get("width", default_w)), int(style.get("height", default_h))
+    render = VideoAspect(aspect).to_resolution()
+    return render, (int(style.get("width", render[0])), int(style.get("height", render[1])))
 
 
 def build_doc(script: str, cues, audio_duration: float, preset: presets.Preset, cfg: dict,
@@ -97,10 +99,10 @@ def build_doc(script: str, cues, audio_duration: float, preset: presets.Preset, 
     seeds = [_seed_for(mode, base, i) for i in range(1, len(segments) + 1)]
     motions = motion.pick_motions(
         len(segments), cfg["scene_motions"], cfg["scene_motion_order"], seeds)
-    width, height = _target_size(style, aspect)
+    (width, height), (image_w, image_h) = _sizes(style, aspect)
     return {
         "version": 1, "preset": preset.name, "audio_duration": round(audio_duration, 3),
-        "width": width, "height": height,
+        "width": width, "height": height, "image_width": image_w, "image_height": image_h,
         "scenes": [
             {"index": i, "start": s.start, "end": s.end, "narration": s.text,
              "prompt": prompts[i - 1], "seed": seeds[i - 1], "image": "", "image_key": "",
@@ -162,6 +164,7 @@ def render(task_folder: str, doc: dict, preset: presets.Preset, cfg: dict, backe
     style = preset.style or {}
     negative = style.get("negative_prompt", "")
     width, height = doc["width"], doc["height"]
+    image_w, image_h = doc.get("image_width", width), doc.get("image_height", height)
     clip_dir = os.path.join(task_folder, "scene_clips")
     os.makedirs(clip_dir, exist_ok=True)
     frames = frame_counts(doc)
@@ -169,7 +172,7 @@ def render(task_folder: str, doc: dict, preset: presets.Preset, cfg: dict, backe
     for scene, n_frames in zip(doc["scenes"], frames):
         try:
             path, key, _ = image_backends.fetch_image(
-                backend, _full_prompt(scene, style), negative, scene["seed"], width, height,
+                backend, _full_prompt(scene, style), negative, scene["seed"], image_w, image_h,
                 force=scene["index"] in regenerate, directory=image_dir)
         except image_backends.ImageBackendError as exc:
             save_doc(task_folder, doc)  # keep progress so a re-run only redoes what is missing

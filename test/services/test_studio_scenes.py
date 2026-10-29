@@ -249,6 +249,9 @@ def scene_env(tmp_path, monkeypatch):
         return json.dumps({"scenes": [{"scene": i, "prompt": f"Mara shot {i}"} for i in (1, 2, 3)]})
 
     doc = scenes.build_doc("script text", parse_srt(SRT), 9.0, preset, cfg, "9:16", ask=ask)
+    assert (doc["width"], doc["height"]) == (1080, 1920)  # video size follows the aspect
+    assert (doc["image_width"], doc["image_height"]) == (180, 320)  # style size = image request
+    doc["width"], doc["height"] = 180, 320  # keep the test renders small
     return folder, doc, preset, cfg, tmp_path / "images"
 
 
@@ -257,7 +260,6 @@ def test_build_doc_fields_seeds_and_motions(scene_env):
     assert [s["seed"] for s in doc["scenes"]] == [101, 102, 103]
     assert [s["motion"] for s in doc["scenes"]] == ["zoom_in", "zoom_out", "pan_left"]
     assert doc["scenes"][0]["prompt"] == "a tall woman shot 1"
-    assert (doc["width"], doc["height"]) == (180, 320)
     scenes.validate_doc(doc)
 
 

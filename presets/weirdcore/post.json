@@ -1,0 +1,29 @@
+{
+  "look": {
+    "contrast": 1.1,
+    "saturation": 1.3,
+    "gamma": 0.95,
+    "grain": 15,
+    "chroma_offset": 3,
+    "vignette": 0.6,
+    "blur": 0.4
+  },
+  "subtitles": {
+    "enabled": true,
+    "font": "Be Vietnam Pro",
+    "fonts_dir": "fonts",
+    "size": 72,
+    "color": "#FFFFFF",
+    "outline_color": "#000000",
+    "outline_width": 4,
+    "shadow": 0,
+    "uppercase": false,
+    "position": "middle",
+    "margin_v": 160,
+    "letter_spacing": 0,
+    "under_grain": true
+  },
+  "voice_volume": 1.0,
+  "cues": [],
+  "x264": {"preset": "veryfast", "crf": 18}
+}
